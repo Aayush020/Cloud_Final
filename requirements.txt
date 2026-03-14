@@ -4,3 +4,8 @@ flask-sqlalchemy
 werkzeug
 flask-limiter
 pyjwt
+flask
+flask-sqlalchemy
+werkzeug
+cryptography
+gunicorn
