@@ -9,12 +9,17 @@ from datetime import datetime, timedelta
 from functools import wraps
 import os, io, secrets, json, traceback
 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
 app = Flask(__name__)
-app.secret_key = 'clouddedupe_master_2024_secret'
+app.secret_key = os.environ.get('SECRET_KEY', 'clouddedupe_master_2024_secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///clouddedupe.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', 'uploads')
+app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 52428800))
 
 db.init_app(app)
 with app.app_context():
@@ -522,3 +527,4 @@ def chart_data():
 
 if __name__ == '__main__':
     app.run(debug=True)
+    
