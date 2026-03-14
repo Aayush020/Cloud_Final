@@ -1,11 +1,8 @@
 flask
-cryptography
-flask-sqlalchemy
-werkzeug
-flask-limiter
-pyjwt
-flask
-flask-sqlalchemy
+pymongo
+flask-pymongo
 werkzeug
 cryptography
 gunicorn
+python-dotenv
+dnspython

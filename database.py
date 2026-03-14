@@ -1,70 +1,111 @@
-from flask_sqlalchemy import SQLAlchemy
+from flask_pymongo import PyMongo
 from datetime import datetime
 
-db = SQLAlchemy()
+mongo = PyMongo()
 
-class User(db.Model):
-    __tablename__ = 'users'
-    id            = db.Column(db.Integer, primary_key=True)
-    username      = db.Column(db.String(80), unique=True, nullable=False)
-    email         = db.Column(db.String(120), unique=True, nullable=False)
-    password      = db.Column(db.String(256), nullable=False)
-    is_admin      = db.Column(db.Boolean, default=False)
-    created_at    = db.Column(db.DateTime, default=datetime.utcnow)
-    files         = db.relationship('FileRecord', backref='owner', lazy=True)
+def get_user_by_email(email):
+    return mongo.db.users.find_one({'email': email})
 
-class FileRecord(db.Model):
-    __tablename__ = 'files'
-    id              = db.Column(db.Integer, primary_key=True)
-    user_id         = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    original_name   = db.Column(db.String(256), nullable=False)
-    file_size       = db.Column(db.Integer, nullable=False)
-    md5_hash        = db.Column(db.String(32), nullable=False)
-    dedup_key       = db.Column(db.String(64), nullable=False)
-    is_duplicate    = db.Column(db.Boolean, default=False)
-    stored_path     = db.Column(db.String(512), nullable=True)
-    ref_file_id     = db.Column(db.Integer, db.ForeignKey('files.id'), nullable=True)
-    uploaded_at     = db.Column(db.DateTime, default=datetime.utcnow)
-    file_type       = db.Column(db.String(50), nullable=True)
-    version         = db.Column(db.Integer, default=1)
-    parent_id       = db.Column(db.Integer, db.ForeignKey('files.id'), nullable=True)
-    versions        = db.relationship('FileRecord', foreign_keys='FileRecord.parent_id',
-                                      backref=db.backref('parent', remote_side=[id]), lazy=True)
+def get_user_by_username(username):
+    return mongo.db.users.find_one({'username': username})
 
-class ShareLink(db.Model):
-    __tablename__ = 'share_links'
-    id           = db.Column(db.Integer, primary_key=True)
-    file_id      = db.Column(db.Integer, db.ForeignKey('files.id'), nullable=False)
-    token        = db.Column(db.String(64), unique=True, nullable=False)
-    password     = db.Column(db.String(256), nullable=True)
-    expires_at   = db.Column(db.DateTime, nullable=True)
-    created_at   = db.Column(db.DateTime, default=datetime.utcnow)
-    access_count = db.Column(db.Integer, default=0)
+def get_user_by_id(user_id):
+    from bson import ObjectId
+    return mongo.db.users.find_one({'_id': ObjectId(user_id)})
 
-class AuditLog(db.Model):
-    __tablename__ = 'audit_logs'
-    id         = db.Column(db.Integer, primary_key=True)
-    user_id    = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
-    action     = db.Column(db.String(64), nullable=False)
-    filename   = db.Column(db.String(256), nullable=True)
-    details    = db.Column(db.String(512), nullable=True)
-    ip_address = db.Column(db.String(64), nullable=True)
-    timestamp  = db.Column(db.DateTime, default=datetime.utcnow)
+def create_user(username, email, password_hash):
+    user = {
+        'username':   username,
+        'email':      email,
+        'password':   password_hash,
+        'is_admin':   False,
+        'created_at': datetime.utcnow()
+    }
+    result = mongo.db.users.insert_one(user)
+    create_stats(str(result.inserted_id))
+    return str(result.inserted_id)
 
-class StorageStats(db.Model):
-    __tablename__ = 'storage_stats'
-    id               = db.Column(db.Integer, primary_key=True)
-    user_id          = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    total_uploaded   = db.Column(db.Integer, default=0)
-    actual_stored    = db.Column(db.Integer, default=0)
-    duplicates_found = db.Column(db.Integer, default=0)
-    space_saved      = db.Column(db.Integer, default=0)
+def create_stats(user_id):
+    mongo.db.storage_stats.insert_one({
+        'user_id':         user_id,
+        'total_uploaded':  0,
+        'actual_stored':   0,
+        'duplicates_found':0,
+        'space_saved':     0
+    })
 
-class DailyStats(db.Model):
-    __tablename__ = 'daily_stats'
-    id          = db.Column(db.Integer, primary_key=True)
-    user_id     = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    date        = db.Column(db.String(12), nullable=False)
-    uploads     = db.Column(db.Integer, default=0)
-    duplicates  = db.Column(db.Integer, default=0)
-    space_saved = db.Column(db.Integer, default=0)
+def get_stats(user_id):
+    stats = mongo.db.storage_stats.find_one({'user_id': user_id})
+    if not stats:
+        create_stats(user_id)
+        stats = mongo.db.storage_stats.find_one({'user_id': user_id})
+    return stats
+
+def update_stats(user_id, **kwargs):
+    mongo.db.storage_stats.update_one(
+        {'user_id': user_id},
+        {'$inc': kwargs}
+    )
+
+def create_file_record(data):
+    result = mongo.db.files.insert_one(data)
+    return str(result.inserted_id)
+
+def get_file_by_id(file_id):
+    from bson import ObjectId
+    return mongo.db.files.find_one({'_id': ObjectId(file_id)})
+
+def get_file_by_dedup_key(dedup_key):
+    return mongo.db.files.find_one({'dedup_key': dedup_key})
+
+def get_user_files(user_id):
+    return list(mongo.db.files.find(
+        {'user_id': user_id, 'parent_id': None}
+    ).sort('uploaded_at', -1))
+
+def delete_file_record(file_id):
+    from bson import ObjectId
+    mongo.db.files.delete_one({'_id': ObjectId(file_id)})
+
+def log_action(user_id, action, filename=None, details=None, ip=None):
+    mongo.db.audit_logs.insert_one({
+        'user_id':    user_id,
+        'action':     action,
+        'filename':   filename,
+        'details':    details,
+        'ip_address': ip,
+        'timestamp':  datetime.utcnow()
+    })
+
+def get_audit_logs(user_id, limit=8):
+    return list(mongo.db.audit_logs.find(
+        {'user_id': user_id}
+    ).sort('timestamp', -1).limit(limit))
+
+def update_daily(user_id, uploads=0, duplicates=0, space_saved=0):
+    today = datetime.utcnow().strftime('%Y-%m-%d')
+    mongo.db.daily_stats.update_one(
+        {'user_id': user_id, 'date': today},
+        {'$inc': {
+            'uploads':     uploads,
+            'duplicates':  duplicates,
+            'space_saved': space_saved
+        }},
+        upsert=True
+    )
+
+def get_daily_stats(user_id, date):
+    return mongo.db.daily_stats.find_one({'user_id': user_id, 'date': date})
+
+def create_share_link(data):
+    result = mongo.db.share_links.insert_one(data)
+    return str(result.inserted_id)
+
+def get_share_link(token):
+    return mongo.db.share_links.find_one({'token': token})
+
+def increment_share_access(token):
+    mongo.db.share_links.update_one(
+        {'token': token},
+        {'$inc': {'access_count': 1}}
+    )
