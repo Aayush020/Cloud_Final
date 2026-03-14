@@ -1,0 +1,6 @@
+flask
+cryptography
+flask-sqlalchemy
+werkzeug
+flask-limiter
+pyjwt

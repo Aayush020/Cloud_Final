@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CloudDeDupe – Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body class="dashboard-page">
+
+<!-- SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-logo">
+    <span class="logo-icon-sm">☁️</span>
+    <span class="sidebar-title">CloudDeDupe</span>
+  </div>
+  <nav class="sidebar-nav">
+    <a href="#overview" class="nav-item active" onclick="showSection('overview',this)">
+      <span class="nav-icon">⬡</span><span class="nav-label">Dashboard</span>
+    </a>
+    <a href="#files" class="nav-item" onclick="showSection('files',this)">
+      <span class="nav-icon">📁</span><span class="nav-label">My Files</span>
+    </a>
+    <a href="#analytics" class="nav-item" onclick="showSection('analytics',this)">
+      <span class="nav-icon">📊</span><span class="nav-label">Analytics</span>
+    </a>
+    <a href="#audit" class="nav-item" onclick="showSection('audit',this)">
+      <span class="nav-icon">🔍</span><span class="nav-label">Audit Log</span>
+    </a>
+    {% if is_admin %}
+    <a href="/admin" class="nav-item">
+      <span class="nav-icon">⚙️</span><span class="nav-label">Admin Panel</span>
+    </a>
+    {% endif %}
+  </nav>
+  <div class="sidebar-bottom">
+    <button class="theme-btn" onclick="toggleTheme()">🌙 <span>Dark Mode</span></button>
+    <div class="user-pill">
+      <div class="avatar">{{ username[0].upper() }}</div>
+      <span class="nav-label">{{ username }}</span>
+    </div>
+    <a href="{{ url_for('logout') }}" class="logout-link">↩ <span class="nav-label">Logout</span></a>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main-content">
+  <div class="topbar">
+    <button class="menu-btn" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+    <h2>Welcome back, <span class="highlight">{{ username }}</span> 👋</h2>
+    <div class="topbar-actions">
+      <button class="btn-upload-top" onclick="document.getElementById('fileInput').click()">+ Upload File</button>
+    </div>
+  </div>
+
+  <!-- ── OVERVIEW SECTION ── -->
+  <section id="sec-overview" class="section active">
+    <!-- Stat cards -->
+    <div class="stats-grid">
+      <div class="stat-card" style="--accent:#6c63ff">
+        <div class="stat-icon" style="background:#ede9fe">📤</div>
+        <div><p class="stat-label">Total Uploaded</p><h3 class="stat-val">{{ total_uploaded }}</h3></div>
+      </div>
+      <div class="stat-card" style="--accent:#22c55e">
+        <div class="stat-icon" style="background:#dcfce7">💾</div>
+        <div><p class="stat-label">Space Saved</p><h3 class="stat-val">{{ space_saved }}</h3></div>
+      </div>
+      <div class="stat-card" style="--accent:#8b5cf6">
+        <div class="stat-icon" style="background:#f3e8ff">🗄️</div>
+        <div><p class="stat-label">Actually Stored</p><h3 class="stat-val">{{ actual_stored }}</h3></div>
+      </div>
+      <div class="stat-card" style="--accent:#f97316">
+        <div class="stat-icon" style="background:#ffedd5">⚠️</div>
+        <div><p class="stat-label">Duplicates Found</p><h3 class="stat-val counter" data-target="{{ duplicates }}">0</h3></div>
+      </div>
+    </div>
+
+    <!-- Dedup bar -->
+    <div class="card dedup-card">
+      <div class="dedup-header">
+        <span>De-duplication Efficiency</span>
+        <strong class="dedup-pct">{{ dedup_rate }}%</strong>
+      </div>
+      <div class="bar-bg"><div class="bar-fill" style="width:{{ dedup_rate }}%"></div></div>
+      <p class="dedup-hint">{{ dedup_rate }}% of your uploaded data was identified as duplicate and saved without re-storing.</p>
+    </div>
+
+    <!-- Upload zone -->
+    <div class="card">
+      <h3 class="card-title">Upload Files</h3>
+      <div class="drop-zone" id="dropZone">
+        <div class="drop-icon">📂</div>
+        <p>Drag & drop files here or <label for="fileInput" class="browse-link">browse</label></p>
+        <span class="drop-hint">All file types supported · Max 50MB · AES encrypted on upload</span>
+        <input type="file" id="fileInput" multiple hidden/>
+      </div>
+      <div id="uploadQueue"></div>
+
+      <!-- Hash Visualizer -->
+      <div id="hashViz" class="hash-viz hidden">
+        <h4>🔐 Live Hash Pipeline</h4>
+        <div class="pipeline">
+          <div class="pipe-step" id="ps-file">
+            <div class="pipe-icon">📄</div>
+            <div class="pipe-label">File</div>
+            <div class="pipe-val" id="pv-name">—</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step" id="ps-md5">
+            <div class="pipe-icon">🔢</div>
+            <div class="pipe-label">MD5 Hash</div>
+            <div class="pipe-val hash-text" id="pv-md5">—</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step" id="ps-sha">
+            <div class="pipe-icon">🔒</div>
+            <div class="pipe-label">SHA-256</div>
+            <div class="pipe-val hash-text" id="pv-sha">—</div>
+          </div>
+          <div class="pipe-arrow">→</div>
+          <div class="pipe-step" id="ps-result">
+            <div class="pipe-icon" id="pv-icon">⏳</div>
+            <div class="pipe-label">Result</div>
+            <div class="pipe-val" id="pv-result">Processing…</div>
+          </div>
+        </div>
+        <div class="chunk-info" id="chunkInfo"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FILES SECTION ── -->
+  <section id="sec-files" class="section">
+    <div class="card">
+      <div class="files-header">
+        <h3 class="card-title">My Files <span class="badge-count">{{ files|length }}</span></h3>
+        <input type="text" id="fileSearch" placeholder="Search files…" class="search-input" oninput="filterFiles(this.value)"/>
+      </div>
+      {% if files %}
+      <div class="table-wrap">
+        <table class="files-table" id="filesTable">
+          <thead>
+            <tr>
+              <th>Name</th><th>Type</th><th>Size</th><th>Status</th><th>Version</th><th>Uploaded</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for f in files %}
+          <tr id="row-{{ f.id }}" class="file-row" data-name="{{ f.name|lower }}">
+            <td class="fname">
+              <span class="file-icon">📄</span>
+              <span>{{ f.name }}</span>
+            </td>
+            <td><span class="badge type-badge">{{ f.file_type }}</span></td>
+            <td>{{ f.size }}</td>
+            <td>
+              {% if f.is_duplicate %}
+                <span class="badge dup-badge">Duplicate</span>
+              {% else %}
+                <span class="badge uniq-badge">Unique</span>
+              {% endif %}
+            </td>
+            <td>
+              <span class="ver-badge" onclick="showVersions({{ f.id }},'{{ f.name }}')">v{{ f.version }} {% if f.ver_count > 1 %}({{ f.ver_count }}){% endif %}</span>
+            </td>
+            <td class="date-col">{{ f.uploaded_at }}</td>
+            <td class="actions-col">
+              <a href="{{ url_for('download', file_id=f.id) }}" class="act-btn dl-btn" title="Download">⬇</a>
+              <button onclick="verifyFile({{ f.id }},'{{ f.name }}')" class="act-btn vfy-btn" title="Verify integrity">✔</button>
+              <button onclick="openShare({{ f.id }},'{{ f.name }}')" class="act-btn shr-btn" title="Share">🔗</button>
+              <button onclick="deleteFile({{ f.id }})" class="act-btn del-btn" title="Delete">🗑</button>
+            </td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state">
+        <div style="font-size:3rem">📂</div>
+        <p>No files yet. Upload your first file above!</p>
+      </div>
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- ── ANALYTICS SECTION ── -->
+  <section id="sec-analytics" class="section">
+    <div class="analytics-grid">
+      <div class="card">
+        <h3 class="card-title">Uploads (last 7 days)</h3>
+        <canvas id="uploadsChart" height="180"></canvas>
+      </div>
+      <div class="card">
+        <h3 class="card-title">Space Saved in KB (last 7 days)</h3>
+        <canvas id="savedChart" height="180"></canvas>
+      </div>
+    </div>
+    <div class="card">
+      <h3 class="card-title">De-duplication Summary</h3>
+      <div class="summary-grid">
+        <div class="summary-item">
+          <div class="summary-val">{{ dedup_rate }}%</div>
+          <div class="summary-label">Efficiency Rate</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-val">{{ duplicates }}</div>
+          <div class="summary-label">Duplicates Caught</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-val">{{ space_saved }}</div>
+          <div class="summary-label">Storage Saved</div>
+        </div>
+        <div class="summary-item">
+          <div class="summary-val">{{ files|length }}</div>
+          <div class="summary-label">Files Tracked</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── AUDIT LOG SECTION ── -->
+  <section id="sec-audit" class="section">
+    <div class="card">
+      <h3 class="card-title">Recent Activity</h3>
+      {% if audit_logs %}
+      <table class="files-table">
+        <thead><tr><th>Action</th><th>File</th><th>Details</th><th>IP</th><th>Time</th></tr></thead>
+        <tbody>
+        {% for log in audit_logs %}
+        <tr>
+          <td><span class="action-badge action-{{ log.action|lower|replace('_','-') }}">{{ log.action }}</span></td>
+          <td>{{ log.filename or '—' }}</td>
+          <td style="font-size:0.8rem;color:var(--text-secondary)">{{ log.details or '—' }}</td>
+          <td style="font-size:0.8rem;color:var(--text-secondary)">{{ log.ip_address or '—' }}</td>
+          <td style="font-size:0.8rem">{{ log.timestamp.strftime('%d %b, %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state"><p>No activity yet.</p></div>
+      {% endif %}
+    </div>
+  </section>
+</main>
+
+<!-- ── MODALS ── -->
+<div id="overlay" class="overlay hidden" onclick="closeAllModals()"></div>
+
+<!-- Result popup -->
+<div id="resultModal" class="modal hidden">
+  <div class="modal-icon" id="modalIcon"></div>
+  <h4 id="modalTitle"></h4>
+  <p id="modalMsg"></p>
+  <div class="hash-pipeline-result" id="modalHash"></div>
+  <button onclick="closeAllModals()" class="btn-primary">OK</button>
+</div>
+
+<!-- Share modal -->
+<div id="shareModal" class="modal hidden">
+  <h4>🔗 Share File</h4>
+  <p id="shareFileName" style="color:var(--text-secondary);margin-bottom:16px;font-size:0.9rem"></p>
+  <div class="form-group">
+    <label>Expiry</label>
+    <select id="shareExpiry" class="select-input">
+      <option value="1">1 hour</option>
+      <option value="24" selected>24 hours</option>
+      <option value="72">3 days</option>
+      <option value="168">7 days</option>
+    </select>
+  </div>
+  <div class="form-group">
+    <label>Password (optional)</label>
+    <input type="password" id="sharePassword" placeholder="Leave blank for no password" class="text-input"/>
+  </div>
+  <div id="shareResult" class="hidden">
+    <label>Share URL</label>
+    <div class="share-url-row">
+      <input type="text" id="shareUrl" readonly class="text-input"/>
+      <button onclick="copyUrl()" class="btn-copy">Copy</button>
+    </div>
+  </div>
+  <div class="modal-btns">
+    <button onclick="closeAllModals()" class="btn-secondary">Cancel</button>
+    <button onclick="generateShare()" class="btn-primary" id="genShareBtn">Generate Link</button>
+  </div>
+</div>
+
+<!-- Versions modal -->
+<div id="versionsModal" class="modal hidden">
+  <h4>📋 File Versions</h4>
+  <p id="versionsFileName" style="color:var(--text-secondary);margin-bottom:16px;font-size:0.9rem"></p>
+  <div id="versionsList"></div>
+  <div class="modal-btns">
+    <button onclick="closeAllModals()" class="btn-primary">Close</button>
+  </div>
+</div>
+
+<script>
+  const CHART_LABELS  = {{ chart_labels|safe }};
+  const CHART_UPLOADS = {{ chart_uploads|safe }};
+  const CHART_SAVED   = {{ chart_saved|safe }};
+</script>
+<script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+<script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

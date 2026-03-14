@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CloudDeDupe – Admin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+</head>
+<body class="dashboard-page">
+<aside class="sidebar">
+  <div class="sidebar-logo"><span class="logo-icon-sm">☁️</span><span class="sidebar-title">CloudDeDupe</span></div>
+  <nav class="sidebar-nav">
+    <a href="/dashboard" class="nav-item"><span class="nav-icon">⬡</span><span class="nav-label">Dashboard</span></a>
+    <a href="/admin" class="nav-item active"><span class="nav-icon">⚙️</span><span class="nav-label">Admin Panel</span></a>
+  </nav>
+  <div class="sidebar-bottom">
+    <a href="{{ url_for('logout') }}" class="logout-link">↩ <span class="nav-label">Logout</span></a>
+  </div>
+</aside>
+<main class="main-content">
+  <div class="topbar"><h2>⚙️ Admin Panel</h2></div>
+
+  <div class="stats-grid">
+    <div class="stat-card" style="--accent:#6c63ff"><div class="stat-icon" style="background:#ede9fe">📁</div><div><p class="stat-label">Total Files</p><h3 class="stat-val">{{ total_files }}</h3></div></div>
+    <div class="stat-card" style="--accent:#f97316"><div class="stat-icon" style="background:#ffedd5">⚠️</div><div><p class="stat-label">Total Duplicates</p><h3 class="stat-val">{{ total_dups }}</h3></div></div>
+    <div class="stat-card" style="--accent:#22c55e"><div class="stat-icon" style="background:#dcfce7">💾</div><div><p class="stat-label">Total Saved</p><h3 class="stat-val">{{ total_saved }}</h3></div></div>
+    <div class="stat-card" style="--accent:#8b5cf6"><div class="stat-icon" style="background:#f3e8ff">🗄️</div><div><p class="stat-label">Total Stored</p><h3 class="stat-val">{{ total_stored }}</h3></div></div>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">Users</h3>
+    <table class="files-table">
+      <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Admin</th><th>Joined</th><th>Action</th></tr></thead>
+      <tbody>
+      {% for u in users %}
+      <tr>
+        <td>{{ u.id }}</td>
+        <td>{{ u.username }}</td>
+        <td>{{ u.email }}</td>
+        <td><span class="badge {% if u.is_admin %}uniq-badge{% else %}type-badge{% endif %}">{{ 'Admin' if u.is_admin else 'User' }}</span></td>
+        <td>{{ u.created_at.strftime('%d %b %Y') }}</td>
+        <td><button onclick="toggleAdmin({{ u.id }},this)" class="act-btn vfy-btn">Toggle Admin</button></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3 class="card-title">System Audit Log (last 50)</h3>
+    <table class="files-table">
+      <thead><tr><th>User</th><th>Action</th><th>File</th><th>Details</th><th>IP</th><th>Time</th></tr></thead>
+      <tbody>
+      {% for log in logs %}
+      <tr>
+        <td>{{ log.user_id or '—' }}</td>
+        <td><span class="action-badge">{{ log.action }}</span></td>
+        <td>{{ log.filename or '—' }}</td>
+        <td style="font-size:0.8rem;color:var(--text-secondary)">{{ log.details or '—' }}</td>
+        <td style="font-size:0.8rem">{{ log.ip_address or '—' }}</td>
+        <td style="font-size:0.8rem">{{ log.timestamp.strftime('%d %b, %H:%M') }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</main>
+<script>
+function toggleAdmin(uid,btn){
+  fetch('/admin/make_admin/'+uid,{method:'POST'})
+  .then(r=>r.json()).then(d=>{ location.reload(); });
+}
+</script>
+</body>
+</html>

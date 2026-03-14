@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CloudDeDupe – Register</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+</head>
+<body class="auth-page">
+  <button class="theme-toggle" onclick="toggleTheme()">🌙</button>
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="logo-icon">☁️</div>
+      <h1>CloudDeDupe</h1>
+    </div>
+    <p class="auth-subtitle">Secure · Smart · Deduplicated Storage</p>
+    <div class="tab-row">
+      <a href="{{ url_for('login') }}" class="tab">Login</a>
+      <a href="{{ url_for('register') }}" class="tab active">Register</a>
+    </div>
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+    <form method="POST">
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" name="username" placeholder="yourname" required/>
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" name="email" placeholder="name@example.com" required/>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" name="password" placeholder="Min 6 characters" required/>
+      </div>
+      <button type="submit" class="btn-primary">Create Account →</button>
+    </form>
+    <p class="auth-footer">Already have an account? <a href="{{ url_for('login') }}">Login</a></p>
+  </div>
+  <script src="{{ url_for('static', filename='js/theme.js') }}"></script>
+</body>
+</html>

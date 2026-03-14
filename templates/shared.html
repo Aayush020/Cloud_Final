@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>CloudDeDupe – Shared File</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <div class="auth-logo"><div class="logo-icon">☁️</div><h1>CloudDeDupe</h1></div>
+    <p class="auth-subtitle">Shared File Download</p>
+    {% if error %}<div class="alert error">{{ error }}</div>{% endif %}
+    {% if needs_password %}
+    <form method="POST">
+      <div class="form-group">
+        <label>This file is password protected</label>
+        <input type="password" name="password" placeholder="Enter password" required/>
+      </div>
+      <button type="submit" class="btn-primary">Download →</button>
+    </form>
+    {% elif not error %}
+    <p style="text-align:center;color:var(--text-secondary);margin:20px 0">Your download will start automatically.</p>
+    {% endif %}
+  </div>
+</body>
+</html>
