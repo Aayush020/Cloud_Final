@@ -54,9 +54,8 @@
     </div>
   </div>
 
-  <!-- ── OVERVIEW SECTION ── -->
+  <!-- OVERVIEW SECTION -->
   <section id="sec-overview" class="section active">
-    <!-- Stat cards -->
     <div class="stats-grid">
       <div class="stat-card" style="--accent:#6c63ff">
         <div class="stat-icon" style="background:#ede9fe">📤</div>
@@ -76,7 +75,6 @@
       </div>
     </div>
 
-    <!-- Dedup bar -->
     <div class="card dedup-card">
       <div class="dedup-header">
         <span>De-duplication Efficiency</span>
@@ -86,7 +84,6 @@
       <p class="dedup-hint">{{ dedup_rate }}% of your uploaded data was identified as duplicate and saved without re-storing.</p>
     </div>
 
-    <!-- Upload zone -->
     <div class="card">
       <h3 class="card-title">Upload Files</h3>
       <div class="drop-zone" id="dropZone">
@@ -97,7 +94,6 @@
       </div>
       <div id="uploadQueue"></div>
 
-      <!-- Hash Visualizer -->
       <div id="hashViz" class="hash-viz hidden">
         <h4>🔐 Live Hash Pipeline</h4>
         <div class="pipeline">
@@ -130,7 +126,7 @@
     </div>
   </section>
 
-  <!-- ── FILES SECTION ── -->
+  <!-- FILES SECTION -->
   <section id="sec-files" class="section">
     <div class="card">
       <div class="files-header">
@@ -147,7 +143,8 @@
           </thead>
           <tbody>
           {% for f in files %}
-          <tr id="row-{{ f.id }}" class="file-row" data-name="{{ f.name|lower }}">
+          {% set safe_name = f.name | replace("'", "") | replace('"', '') | replace('`', '') %}
+          <tr id="row-{{ f.id }}" class="file-row" data-name="{{ safe_name | lower }}">
             <td class="fname">
               <span class="file-icon">📄</span>
               <span>{{ f.name }}</span>
@@ -162,14 +159,23 @@
               {% endif %}
             </td>
             <td>
-              <span class="ver-badge" onclick="showVersions({{ f.id }},'{{ f.name }}')">v{{ f.version }} {% if f.ver_count > 1 %}({{ f.ver_count }}){% endif %}</span>
+              <span class="ver-badge"
+                onclick="showVersions('{{ f.id }}', this.dataset.fname)"
+                data-fname="{{ safe_name }}">
+                v{{ f.version }}{% if f.ver_count > 1 %} ({{ f.ver_count }}){% endif %}
+              </span>
             </td>
             <td class="date-col">{{ f.uploaded_at }}</td>
             <td class="actions-col">
-              <a href="{{ url_for('download', file_id=f.id) }}" class="act-btn dl-btn" title="Download">⬇</a>
-              <button onclick="verifyFile({{ f.id }},'{{ f.name }}')" class="act-btn vfy-btn" title="Verify integrity">✔</button>
-              <button onclick="openShare({{ f.id }},'{{ f.name }}')" class="act-btn shr-btn" title="Share">🔗</button>
-              <button onclick="deleteFile({{ f.id }})" class="act-btn del-btn" title="Delete">🗑</button>
+              <a href="/download/{{ f.id }}" class="act-btn dl-btn" title="Download">⬇</a>
+              <button onclick="verifyFile('{{ f.id }}', this.dataset.fname)"
+                data-fname="{{ safe_name }}"
+                class="act-btn vfy-btn" title="Verify integrity">✔</button>
+              <button onclick="openShare('{{ f.id }}', this.dataset.fname)"
+                data-fname="{{ safe_name }}"
+                class="act-btn shr-btn" title="Share">🔗</button>
+              <button onclick="deleteFile('{{ f.id }}')"
+                class="act-btn del-btn" title="Delete">🗑</button>
             </td>
           </tr>
           {% endfor %}
@@ -185,7 +191,7 @@
     </div>
   </section>
 
-  <!-- ── ANALYTICS SECTION ── -->
+  <!-- ANALYTICS SECTION -->
   <section id="sec-analytics" class="section">
     <div class="analytics-grid">
       <div class="card">
@@ -220,7 +226,7 @@
     </div>
   </section>
 
-  <!-- ── AUDIT LOG SECTION ── -->
+  <!-- AUDIT LOG SECTION -->
   <section id="sec-audit" class="section">
     <div class="card">
       <h3 class="card-title">Recent Activity</h3>
@@ -230,7 +236,7 @@
         <tbody>
         {% for log in audit_logs %}
         <tr>
-          <td><span class="action-badge action-{{ log.action|lower|replace('_','-') }}">{{ log.action }}</span></td>
+          <td><span class="action-badge">{{ log.action }}</span></td>
           <td>{{ log.filename or '—' }}</td>
           <td style="font-size:0.8rem;color:var(--text-secondary)">{{ log.details or '—' }}</td>
           <td style="font-size:0.8rem;color:var(--text-secondary)">{{ log.ip_address or '—' }}</td>
@@ -246,10 +252,9 @@
   </section>
 </main>
 
-<!-- ── MODALS ── -->
+<!-- MODALS -->
 <div id="overlay" class="overlay hidden" onclick="closeAllModals()"></div>
 
-<!-- Result popup -->
 <div id="resultModal" class="modal hidden">
   <div class="modal-icon" id="modalIcon"></div>
   <h4 id="modalTitle"></h4>
@@ -258,7 +263,6 @@
   <button onclick="closeAllModals()" class="btn-primary">OK</button>
 </div>
 
-<!-- Share modal -->
 <div id="shareModal" class="modal hidden">
   <h4>🔗 Share File</h4>
   <p id="shareFileName" style="color:var(--text-secondary);margin-bottom:16px;font-size:0.9rem"></p>
@@ -288,7 +292,6 @@
   </div>
 </div>
 
-<!-- Versions modal -->
 <div id="versionsModal" class="modal hidden">
   <h4>📋 File Versions</h4>
   <p id="versionsFileName" style="color:var(--text-secondary);margin-bottom:16px;font-size:0.9rem"></p>
