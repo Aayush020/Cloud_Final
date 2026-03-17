@@ -166,17 +166,10 @@
               </span>
             </td>
             <td class="date-col">{{ f.uploaded_at }}</td>
-            <td class="actions-col">
-              <a href="/download/{{ f.id }}" class="act-btn dl-btn" title="Download">⬇</a>
-              <button onclick="verifyFile('{{ f.id }}', this.dataset.fname)"
-                data-fname="{{ safe_name }}"
-                class="act-btn vfy-btn" title="Verify integrity">✔</button>
-              <button onclick="openShare('{{ f.id }}', this.dataset.fname)"
-                data-fname="{{ safe_name }}"
-                class="act-btn shr-btn" title="Share">🔗</button>
-              <button onclick="deleteFile('{{ f.id }}')"
-                class="act-btn del-btn" title="Delete">🗑</button>
-            </td>
+        <td class="actions-col">
+          <a href="/download/{{ f.id }}" class="act-btn dl-btn" title="Download">⬇</a>
+          <button onclick="deleteFile('{{ f.id }}')" class="act-btn del-btn" title="Delete">🗑</button>
+        </td>
           </tr>
           {% endfor %}
           </tbody>
