@@ -11,7 +11,7 @@ from database import (mongo, get_user_by_email, get_user_by_username,
 from deduplication import get_dedup_key, get_file_size_str, get_chunks
 from encryption import encrypt_file, decrypt_file, encrypt_metadata, decrypt_metadata
 from datetime import datetime, timedelta
-from bson import ObjectId
+from bson import ObjectId, Binary
 from functools import wraps
 from dotenv import load_dotenv
 import os, io, secrets, json, traceback
@@ -21,12 +21,11 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'clouddedupe_secret')
 app.config['MONGO_URI'] = os.environ.get('MONGO_URI')
-app.config['UPLOAD_FOLDER'] = os.environ.get('UPLOAD_FOLDER', 'uploads')
 app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 52428800))
 
 mongo.init_app(app)
 
-# ── helpers ──────────────────────────────────────────────────────────────────
+# ── HELPERS ───────────────────────────────────────────────────────────────────
 
 def login_required(f):
     @wraps(f)
@@ -52,7 +51,7 @@ def resolve_record(record):
         record = get_file_by_id(ref_id)
     return record
 
-# ── AUTH ─────────────────────────────────────────────────────────────────────
+# ── AUTH ──────────────────────────────────────────────────────────────────────
 
 @app.route('/')
 def index():
@@ -102,7 +101,7 @@ def logout():
     session.clear()
     return redirect(url_for('login'))
 
-# ── DASHBOARD ────────────────────────────────────────────────────────────────
+# ── DASHBOARD ─────────────────────────────────────────────────────────────────
 
 @app.route('/dashboard')
 @login_required
@@ -159,7 +158,7 @@ def dashboard():
         audit_logs     = logs,
     )
 
-# ── UPLOAD ───────────────────────────────────────────────────────────────────
+# ── UPLOAD ────────────────────────────────────────────────────────────────────
 
 @app.route('/upload', methods=['POST'])
 @login_required
@@ -179,10 +178,10 @@ def upload():
         md5_hash, dedup_key = get_dedup_key(file_bytes)
         chunks = get_chunks(file_bytes)
 
-        # Check duplicate
-        existing = get_file_by_dedup_key(dedup_key)
         update_stats(user_id, total_uploaded=file_size)
 
+        # Check duplicate
+        existing = get_file_by_dedup_key(dedup_key)
         if existing and existing.get('user_id') == user_id:
             log_action(user_id, 'DUPLICATE_DETECTED', original_name,
                       f'Size: {get_file_size_str(file_size)}', request.remote_addr)
@@ -197,34 +196,43 @@ def upload():
                 'chunks':  len(chunks),
             })
 
-        # Encrypt and store
+        # Encrypt file bytes
         encrypted_bytes = encrypt_file(file_bytes)
-        safe_fn         = f"{dedup_key[:16]}_{original_name}.enc"
-        stored_path     = os.path.join(app.config['UPLOAD_FOLDER'], safe_fn)
-        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-        with open(stored_path, 'wb') as fout:
-            fout.write(encrypted_bytes)
+        enc_name        = encrypt_metadata(original_name)
 
-        enc_name = encrypt_metadata(original_name)
-
-        # Check for existing version
+        # Check for existing version by filename
         existing_name = None
         for fr in get_user_files(user_id):
-            if safe_decrypt(fr['original_name']) == original_name:
-                existing_name = fr
-                break
+            try:
+                if safe_decrypt(fr['original_name']) == original_name:
+                    existing_name = fr
+                    break
+            except Exception:
+                continue
+
+        # Base file document — store encrypted bytes directly in MongoDB
+        file_doc = {
+            'user_id':       user_id,
+            'original_name': enc_name,
+            'file_size':     file_size,
+            'md5_hash':      md5_hash,
+            'dedup_key':     dedup_key,
+            'is_duplicate':  False,
+            'stored_path':   None,
+            'file_data':     Binary(encrypted_bytes),
+            'file_type':     file_type,
+            'version':       1,
+            'parent_id':     None,
+            'ref_file_id':   None,
+            'uploaded_at':   datetime.utcnow()
+        }
 
         if existing_name:
             new_version = mongo.db.files.count_documents(
                 {'parent_id': str(existing_name['_id'])}) + 2
-            create_file_record({
-                'user_id': user_id, 'original_name': enc_name,
-                'file_size': file_size, 'md5_hash': md5_hash,
-                'dedup_key': dedup_key, 'is_duplicate': False,
-                'stored_path': stored_path, 'file_type': file_type,
-                'version': new_version, 'parent_id': str(existing_name['_id']),
-                'uploaded_at': datetime.utcnow(), 'ref_file_id': None
-            })
+            file_doc['version']   = new_version
+            file_doc['parent_id'] = str(existing_name['_id'])
+            create_file_record(file_doc)
             update_stats(user_id, actual_stored=file_size)
             update_daily(user_id, uploads=1)
             log_action(user_id, 'VERSION_UPLOADED', original_name,
@@ -232,20 +240,15 @@ def upload():
             return jsonify({
                 'status':  'versioned',
                 'message': f'New version v{new_version} of "{original_name}" saved.',
-                'md5': md5_hash, 'sha256': dedup_key,
-                'size': get_file_size_str(file_size),
-                'version': new_version, 'chunks': len(chunks),
+                'md5':     md5_hash,
+                'sha256':  dedup_key,
+                'size':    get_file_size_str(file_size),
+                'version': new_version,
+                'chunks':  len(chunks),
             })
 
         # Brand new file
-        create_file_record({
-            'user_id': user_id, 'original_name': enc_name,
-            'file_size': file_size, 'md5_hash': md5_hash,
-            'dedup_key': dedup_key, 'is_duplicate': False,
-            'stored_path': stored_path, 'file_type': file_type,
-            'version': 1, 'parent_id': None, 'ref_file_id': None,
-            'uploaded_at': datetime.utcnow()
-        })
+        create_file_record(file_doc)
         update_stats(user_id, actual_stored=file_size)
         update_daily(user_id, uploads=1)
         log_action(user_id, 'FILE_UPLOADED', original_name,
@@ -254,164 +257,205 @@ def upload():
         return jsonify({
             'status':  'uploaded',
             'message': f'"{original_name}" encrypted and stored successfully.',
-            'md5': md5_hash, 'sha256': dedup_key,
-            'size': get_file_size_str(file_size), 'chunks': len(chunks),
+            'md5':     md5_hash,
+            'sha256':  dedup_key,
+            'size':    get_file_size_str(file_size),
+            'chunks':  len(chunks),
         })
 
     except Exception as e:
         print("UPLOAD ERROR:", traceback.format_exc())
         return jsonify({'error': f'Upload failed: {str(e)}'}), 500
 
-# ── DOWNLOAD ─────────────────────────────────────────────────────────────────
+# ── DOWNLOAD ──────────────────────────────────────────────────────────────────
 
 @app.route('/download/<file_id>')
 @login_required
 def download(file_id):
-    record = get_file_by_id(file_id)
-    if not record:
-        abort(404)
-    if record['user_id'] != session['user_id']:
-        abort(403)
-    real = resolve_record(record)
-    if not real or not real.get('stored_path'):
-        abort(404)
-    with open(real['stored_path'], 'rb') as f:
-        data = f.read()
-    decrypted = decrypt_file(data)
-    filename  = safe_decrypt(record['original_name'])
-    log_action(session['user_id'], 'FILE_DOWNLOADED', filename,
-              ip=request.remote_addr)
-    return send_file(io.BytesIO(decrypted), as_attachment=True,
-                    download_name=filename)
+    try:
+        record = get_file_by_id(file_id)
+        if not record:
+            return "File not found.", 404
+        if record['user_id'] != session['user_id']:
+            abort(403)
 
-# ── DELETE ───────────────────────────────────────────────────────────────────
+        real = resolve_record(record)
+        if not real:
+            return "File reference broken.", 404
+
+        # Read encrypted bytes from MongoDB
+        file_data = real.get('file_data')
+        if not file_data:
+            return "File data missing from database. Please re-upload this file.", 404
+
+        decrypted = decrypt_file(bytes(file_data))
+        filename  = safe_decrypt(record['original_name'])
+        log_action(session['user_id'], 'FILE_DOWNLOADED', filename,
+                  ip=request.remote_addr)
+        return send_file(
+            io.BytesIO(decrypted),
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print("DOWNLOAD ERROR:", traceback.format_exc())
+        return f"Download failed: {str(e)}", 500
+
+# ── DELETE ────────────────────────────────────────────────────────────────────
 
 @app.route('/delete/<file_id>', methods=['POST'])
 @login_required
 def delete(file_id):
-    record = get_file_by_id(file_id)
-    if not record:
-        return jsonify({'error': 'Not found'}), 404
-    if record['user_id'] != session['user_id']:
-        return jsonify({'error': 'Unauthorized'}), 403
+    try:
+        record = get_file_by_id(file_id)
+        if not record:
+            return jsonify({'error': 'Not found'}), 404
+        if record['user_id'] != session['user_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
 
-    name = safe_decrypt(record['original_name'])
+        name = safe_decrypt(record['original_name'])
 
-    # Delete children
-    for child in mongo.db.files.find({'parent_id': file_id}):
-        if child.get('stored_path') and os.path.exists(child['stored_path']):
-            os.remove(child['stored_path'])
-        delete_file_record(str(child['_id']))
+        # Delete child versions from MongoDB
+        for child in mongo.db.files.find({'parent_id': file_id}):
+            delete_file_record(str(child['_id']))
 
-    # Delete actual file
-    if not record.get('is_duplicate') and record.get('stored_path'):
-        if os.path.exists(record['stored_path']):
-            os.remove(record['stored_path'])
-        update_stats(session['user_id'], actual_stored=-record['file_size'])
-    else:
-        update_stats(session['user_id'],
-                    duplicates_found=-1,
-                    space_saved=-record['file_size'])
+        # Update stats
+        if record.get('is_duplicate'):
+            update_stats(session['user_id'],
+                        duplicates_found=-1,
+                        space_saved=-record['file_size'])
+        else:
+            update_stats(session['user_id'],
+                        actual_stored=-record['file_size'])
 
-    update_stats(session['user_id'], total_uploaded=-record['file_size'])
-    log_action(session['user_id'], 'FILE_DELETED', name, ip=request.remote_addr)
-    delete_file_record(file_id)
-    return jsonify({'status': 'deleted'})
+        update_stats(session['user_id'], total_uploaded=-record['file_size'])
+        log_action(session['user_id'], 'FILE_DELETED', name, ip=request.remote_addr)
+        delete_file_record(file_id)
+        return jsonify({'status': 'deleted'})
 
-# ── VERSIONS ─────────────────────────────────────────────────────────────────
+    except Exception as e:
+        print("DELETE ERROR:", traceback.format_exc())
+        return jsonify({'error': f'Delete failed: {str(e)}'}), 500
+
+# ── VERSIONS ──────────────────────────────────────────────────────────────────
 
 @app.route('/versions/<file_id>')
 @login_required
 def versions(file_id):
-    record = get_file_by_id(file_id)
-    if not record or record['user_id'] != session['user_id']:
-        abort(403)
-    all_versions = [record] + list(
-        mongo.db.files.find({'parent_id': file_id}).sort('version', 1))
-    return jsonify([{
-        'id':      str(v['_id']),
-        'version': v.get('version', 1),
-        'size':    get_file_size_str(v['file_size']),
-        'date':    v['uploaded_at'].strftime('%d %b %Y, %I:%M %p'),
-        'md5':     v.get('md5_hash', '')
-    } for v in all_versions])
+    try:
+        record = get_file_by_id(file_id)
+        if not record or record['user_id'] != session['user_id']:
+            abort(403)
+        all_versions = [record] + list(
+            mongo.db.files.find({'parent_id': file_id}).sort('version', 1))
+        return jsonify([{
+            'id':      str(v['_id']),
+            'version': v.get('version', 1),
+            'size':    get_file_size_str(v['file_size']),
+            'date':    v['uploaded_at'].strftime('%d %b %Y, %I:%M %p'),
+            'md5':     v.get('md5_hash', '')
+        } for v in all_versions])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
-# ── SHARE ─────────────────────────────────────────────────────────────────────
+# ── SHARE LINKS ───────────────────────────────────────────────────────────────
 
 @app.route('/share/<file_id>', methods=['POST'])
 @login_required
 def create_share(file_id):
-    record = get_file_by_id(file_id)
-    if not record or record['user_id'] != session['user_id']:
-        return jsonify({'error': 'Unauthorized'}), 403
-    data       = request.get_json() or {}
-    token      = secrets.token_urlsafe(32)
-    expires_in = int(data.get('expires_hours', 24))
-    password   = data.get('password', '').strip() or None
-    create_share_link({
-        'file_id':      file_id,
-        'token':        token,
-        'password':     generate_password_hash(password) if password else None,
-        'expires_at':   datetime.utcnow() + timedelta(hours=expires_in),
-        'created_at':   datetime.utcnow(),
-        'access_count': 0
-    })
-    name = safe_decrypt(record['original_name'])
-    log_action(session['user_id'], 'SHARE_CREATED', name,
-              f'Expires in {expires_in}h', request.remote_addr)
-    share_url = request.host_url.rstrip('/') + url_for('shared_download', token=token)
-    return jsonify({'url': share_url, 'expires_in': expires_in, 'token': token})
+    try:
+        record = get_file_by_id(file_id)
+        if not record or record['user_id'] != session['user_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        data       = request.get_json() or {}
+        token      = secrets.token_urlsafe(32)
+        expires_in = int(data.get('expires_hours', 24))
+        password   = data.get('password', '').strip() or None
+        create_share_link({
+            'file_id':      file_id,
+            'token':        token,
+            'password':     generate_password_hash(password) if password else None,
+            'expires_at':   datetime.utcnow() + timedelta(hours=expires_in),
+            'created_at':   datetime.utcnow(),
+            'access_count': 0
+        })
+        name = safe_decrypt(record['original_name'])
+        log_action(session['user_id'], 'SHARE_CREATED', name,
+                  f'Expires in {expires_in}h', request.remote_addr)
+        share_url = request.host_url.rstrip('/') + url_for('shared_download', token=token)
+        return jsonify({'url': share_url, 'expires_in': expires_in, 'token': token})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/s/<token>', methods=['GET', 'POST'])
 def shared_download(token):
-    link = get_share_link(token)
-    if not link:
-        abort(404)
-    if link.get('expires_at') and datetime.utcnow() > link['expires_at']:
-        return render_template('shared.html', error='This link has expired.')
-    if link.get('password'):
-        if request.method == 'GET':
-            return render_template('shared.html', token=token, needs_password=True)
-        pwd = request.form.get('password', '')
-        if not check_password_hash(link['password'], pwd):
-            return render_template('shared.html', token=token,
-                                  needs_password=True, error='Wrong password.')
-    record = get_file_by_id(link['file_id'])
-    if not record:
-        abort(404)
-    real = resolve_record(record)
-    if not real or not real.get('stored_path'):
-        abort(404)
-    with open(real['stored_path'], 'rb') as f:
-        data = f.read()
-    decrypted = decrypt_file(data)
-    filename  = safe_decrypt(record['original_name'])
-    increment_share_access(token)
-    return send_file(io.BytesIO(decrypted), as_attachment=True,
-                    download_name=filename)
+    try:
+        link = get_share_link(token)
+        if not link:
+            abort(404)
+        if link.get('expires_at') and datetime.utcnow() > link['expires_at']:
+            return render_template('shared.html', error='This link has expired.')
+        if link.get('password'):
+            if request.method == 'GET':
+                return render_template('shared.html', token=token, needs_password=True)
+            pwd = request.form.get('password', '')
+            if not check_password_hash(link['password'], pwd):
+                return render_template('shared.html', token=token,
+                                      needs_password=True, error='Wrong password.')
+        record = get_file_by_id(link['file_id'])
+        if not record:
+            abort(404)
+        real = resolve_record(record)
+        if not real:
+            abort(404)
 
-# ── VERIFY ───────────────────────────────────────────────────────────────────
+        # Read from MongoDB
+        file_data = real.get('file_data')
+        if not file_data:
+            return "File no longer available. Please ask the owner to re-upload.", 404
+
+        decrypted = decrypt_file(bytes(file_data))
+        filename  = safe_decrypt(record['original_name'])
+        increment_share_access(token)
+        return send_file(
+            io.BytesIO(decrypted),
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print("SHARE DOWNLOAD ERROR:", traceback.format_exc())
+        return f"Download failed: {str(e)}", 500
+
+# ── VERIFY ────────────────────────────────────────────────────────────────────
 
 @app.route('/verify/<file_id>')
 @login_required
 def verify_integrity(file_id):
-    record = get_file_by_id(file_id)
-    if not record or record['user_id'] != session['user_id']:
-        return jsonify({'error': 'Unauthorized'}), 403
-    real = resolve_record(record)
-    if not real or not real.get('stored_path') or not os.path.exists(real['stored_path']):
-        return jsonify({'status': 'missing', 'ok': False})
     try:
-        with open(real['stored_path'], 'rb') as f:
-            enc_data = f.read()
-        decrypted = decrypt_file(enc_data)
+        record = get_file_by_id(file_id)
+        if not record or record['user_id'] != session['user_id']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        real = resolve_record(record)
+        if not real:
+            return jsonify({'status': 'missing', 'ok': False})
+
+        file_data = real.get('file_data')
+        if not file_data:
+            return jsonify({'status': 'missing', 'ok': False,
+                           'error': 'No file data in database'})
+
+        decrypted = decrypt_file(bytes(file_data))
         _, recomputed = get_dedup_key(decrypted)
         ok = recomputed == real['dedup_key']
         log_action(session['user_id'], 'INTEGRITY_CHECK',
                   safe_decrypt(record['original_name']),
                   'PASS' if ok else 'FAIL', request.remote_addr)
-        return jsonify({'status': 'ok' if ok else 'tampered', 'ok': ok,
-                       'stored_hash': real['dedup_key'], 'recomputed': recomputed})
+        return jsonify({
+            'status':      'ok' if ok else 'tampered',
+            'ok':          ok,
+            'stored_hash': real['dedup_key'],
+            'recomputed':  recomputed
+        })
     except Exception as e:
         return jsonify({'status': 'error', 'ok': False, 'error': str(e)})
 
@@ -422,14 +466,14 @@ def verify_integrity(file_id):
 def admin():
     if not session.get('is_admin'):
         abort(403)
-    users      = list(mongo.db.users.find())
-    all_logs   = list(mongo.db.audit_logs.find().sort('timestamp', -1).limit(50))
+    users        = list(mongo.db.users.find())
+    all_logs     = list(mongo.db.audit_logs.find().sort('timestamp', -1).limit(50))
     total_files  = mongo.db.files.count_documents({})
     total_dups   = mongo.db.files.count_documents({'is_duplicate': True})
     stats_agg    = list(mongo.db.storage_stats.aggregate([
         {'$group': {'_id': None,
-                    'total_saved':   {'$sum': '$space_saved'},
-                    'total_stored':  {'$sum': '$actual_stored'}}}
+                    'total_saved':  {'$sum': '$space_saved'},
+                    'total_stored': {'$sum': '$actual_stored'}}}
     ]))
     agg = stats_agg[0] if stats_agg else {}
     return render_template('admin.html',
